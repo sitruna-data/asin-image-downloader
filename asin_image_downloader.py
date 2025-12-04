@@ -40,60 +40,53 @@ if uploaded_file:
 
     # Button
     if st.button("Generate ZIP"):
-        if not image_columns:
-            st.error("Please select at least one image column.")
-        else:
-            with st.spinner("Downloading images…"):
-                temp_dir = tempfile.mkdtemp()
-                zip_path = os.path.join(temp_dir, "asin_images.zip")
-                image_count = 0
+    if not image_columns:
+        st.error("Please select at least one image column.")
+    else:
+        with st.spinner("Downloading images…"):
+            zip_buffer = BytesIO()
+            image_count = 0
 
-                with zipfile.ZipFile(zip_path, "w") as zipf:
-                    for _, row in df.iterrows():
-                        asin = str(row[asin_col]).strip()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for _, row in df.iterrows():
+                    asin = str(row[asin_col]).strip()
+                    pt_counter = 1  # PT01 starts after Main
 
-                        pt_counter = 1  # PT01 starts after Main
+                    for col in image_columns:
+                        url = str(row[col]).strip()
+                        if not url or url.lower() == "nan":
+                            continue
 
-                        for col in image_columns:
-                            url = str(row[col]).strip()
+                        col_lower = col.lower()
 
-                            if not url or url.lower() == "nan":
-                                continue
+                        # Decide suffix
+                        if col_lower == "main image":
+                            suffix = "Main"
+                        elif "swatch" in col_lower:
+                            suffix = "Swatch"
+                        else:
+                            suffix = f"PT{pt_counter:02d}"
+                            pt_counter += 1
 
-                            col_lower = col.lower()
+                        filename = f"{asin}.{suffix}.jpg"
 
-                            # Decide suffix
-                            if col_lower == "main image":
-                                suffix = "Main"
-                            elif "swatch" in col_lower:
-                                suffix = "Swatch"
-                            else:
-                                suffix = f"PT{pt_counter:02d}"
-                                pt_counter += 1
+                        try:
+                            response = requests.get(url, timeout=10)
+                            response.raise_for_status()
 
-                            filename = f"{asin}.{suffix}.jpg"
+                            zipf.writestr(filename, response.content)
+                            image_count += 1
 
-                            try:
-                                response = requests.get(url, timeout=10)
-                                response.raise_for_status()
+                        except Exception as e:
+                            st.warning(f"Failed to download {url} — {e}")
 
-                                file_path = os.path.join(temp_dir, filename)
+            zip_buffer.seek(0)
 
-                                with open(file_path, "wb") as f:
-                                    f.write(response.content)
+        st.success(f"Done! {image_count} images downloaded and zipped.")
 
-                                zipf.write(file_path, filename)
-                                image_count += 1
-
-                            except Exception as e:
-                                st.warning(f"Failed to download {url} — {e}")
-
-            st.success(f"Done! {image_count} images downloaded and zipped.")
-
-            with open(zip_path, "rb") as f:
-                st.download_button(
-                    label="Download ZIP",
-                    data=f,
-                    file_name="asin_images.zip",
-                    mime="application/zip"
-                )
+        st.download_button(
+            label="Download ZIP",
+            data=zip_buffer,
+            file_name="asin_images.zip",
+            mime="application/zip"
+        )
