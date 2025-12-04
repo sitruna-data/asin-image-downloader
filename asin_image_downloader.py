@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 import requests
 import zipfile
-from io import BytesIO  # IMPORTANT for in-memory ZIP
+from io import BytesIO
 
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
 st.title("ASIN Image Downloader")
 st.write("Upload your file with ASINs and multiple image columns. The app will download, rename, and zip everything for you.")
 
+# ------------------------------
 # FILE UPLOAD
+# ------------------------------
 uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
 
 if uploaded_file:
+
     # Load file
     if uploaded_file.name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
@@ -29,7 +32,7 @@ if uploaded_file:
         index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
     )
 
-    # Image columns (multi-select)
+    # Select image columns
     st.write("### Select Image Columns (in order)")
     image_columns = st.multiselect(
         "Choose columns with image URLs",
@@ -37,22 +40,30 @@ if uploaded_file:
         default=[c for c in df.columns if "Image" in c or "Swatch" in c]
     )
 
-    # Button
+    # ------------------------------
+    # GENERATE ZIP BUTTON
+    # ------------------------------
     if st.button("Generate ZIP"):
+
         if not image_columns:
             st.error("Please select at least one image column.")
+
         else:
             with st.spinner("Downloading images…"):
+
                 zip_buffer = BytesIO()
                 image_count = 0
 
+                # Create in-memory ZIP
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+
                     for _, row in df.iterrows():
                         asin = str(row[asin_col]).strip()
                         pt_counter = 1  # PT01 starts after Main
 
                         for col in image_columns:
                             url = str(row[col]).strip()
+
                             if not url or url.lower() == "nan":
                                 continue
 
@@ -72,7 +83,6 @@ if uploaded_file:
                             try:
                                 response = requests.get(url, timeout=10)
                                 response.raise_for_status()
-
                                 zipf.writestr(filename, response.content)
                                 image_count += 1
 
