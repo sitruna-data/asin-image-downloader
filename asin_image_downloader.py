@@ -1,94 +1,129 @@
 import streamlit as st
+import pandas as pd
+import requests
+import zipfile
+from io import BytesIO
 
-st.set_page_config(page_title="ASIN Image Downloader Debug", layout="centered")
+st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
-st.title("ASIN Image Downloader – Debug Mode")
+st.title("ASIN Image Downloader")
+st.write("""
+Upload your file with ASINs and multiple image columns.  
+The app will download, rename, and zip everything for you.
+""")
 
-st.write("If an error occurs before the UI loads, it will be displayed below.")
+# ------------------------------
+# Helper: Safe URL validator
+# ------------------------------
+def is_valid_url(url):
+    """Returns True only for real, usable URLs."""
+    if url is None:
+        return False
 
-try:
-    import pandas as pd
-    import requests
-    import zipfile
-    from io import BytesIO
+    url = str(url).strip()
 
-    st.success("Imports loaded successfully!")
+    if url.lower() in ["", "nan", "none", "null", "na"]:
+        return False
+
+    if not url.startswith("http"):
+        return False
+
+    return True
+
+
+# ------------------------------
+# FILE UPLOAD
+# ------------------------------
+uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
+
+if uploaded_file:
+
+    # Load file safely
+    try:
+        if uploaded_file.name.endswith(".xlsx"):
+            df = pd.read_excel(uploaded_file, engine="openpyxl")
+        else:
+            df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        st.stop()
+
+    st.write("### Preview")
+    st.dataframe(df.head())
+
+    # Select ASIN column
+    asin_col = st.selectbox(
+        "Select ASIN Column",
+        df.columns,
+        index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
+    )
+
+    # Select image columns
+    st.write("### Select Image Columns (in the correct order)")
+    image_columns = st.multiselect(
+        "Choose columns with image URLs",
+        df.columns,
+        default=[c for c in df.columns if "Image" in c or "Swatch" in c]
+    )
 
     # ------------------------------
-    # FILE UPLOAD
+    # GENERATE ZIP BUTTON
     # ------------------------------
-    uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
+    if st.button("Generate ZIP"):
 
-    if uploaded_file:
-
-        st.write("File uploaded. Attempting to read...")
-
-        try:
-            if uploaded_file.name.endswith(".xlsx"):
-                df = pd.read_excel(uploaded_file, engine="openpyxl")
-            else:
-                df = pd.read_csv(uploaded_file)
-
-            st.write("### Preview")
-            st.dataframe(df.head())
-
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
+        if not image_columns:
+            st.error("Please select at least one image column.")
             st.stop()
 
-        asin_col = st.selectbox("Select ASIN Column", df.columns)
+        with st.spinner("Downloading images…"):
 
-        image_columns = st.multiselect(
-            "Select Image Columns",
-            df.columns,
-            default=[c for c in df.columns if "Image" in c or "Swatch" in c]
-        )
+            zip_buffer = BytesIO()
+            image_count = 0
 
-        if st.button("Generate ZIP"):
-            try:
-                zip_buffer = BytesIO()
-                image_count = 0
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
 
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                    for _, row in df.iterrows():
-                        asin = str(row[asin_col]).strip()
-                        pt_counter = 1
+                for _, row in df.iterrows():
 
-                        for col in image_columns:
-                            url = str(row[col]).strip()
-                            if not url:
-                                continue
+                    asin = str(row[asin_col]).strip()
+                    pt_counter = 1  # PT01 starts after Main image
 
-                            col_lower = col.lower()
+                    for col in image_columns:
+                        raw_url = row[col]
 
-                            if col_lower == "main image":
-                                suffix = "Main"
-                            elif "swatch" in col_lower:
-                                suffix = "Swatch"
-                            else:
-                                suffix = f"PT{pt_counter:02d}"
-                                pt_counter += 1
+                        if not is_valid_url(raw_url):
+                            continue
 
-                            filename = f"{asin}.{suffix}.jpg"
+                        url = str(raw_url).strip()
+                        col_lower = col.lower()
 
+                        # Assign proper suffix
+                        if col_lower == "main image":
+                            suffix = "Main"
+                        elif "swatch" in col_lower:
+                            suffix = "Swatch"
+                        else:
+                            suffix = f"PT{pt_counter:02d}"
+                            pt_counter += 1
+
+                        filename = f"{asin}.{suffix}.jpg"
+
+                        try:
                             response = requests.get(url, timeout=10)
                             response.raise_for_status()
+
                             zipf.writestr(filename, response.content)
                             image_count += 1
 
-                zip_buffer.seek(0)
+                        except Exception as e:
+                            st.warning(f"Skipping {url} — {e}")
 
-                st.success(f"Done! {image_count} images processed.")
+            zip_buffer.seek(0)
 
-                st.download_button(
-                    label="Download ZIP",
-                    data=zip_buffer,
-                    file_name="asin_images.zip",
-                    mime="application/zip"
-                )
+        st.success(f"Done! {image_count} images downloaded and zipped.")
 
-            except Exception as e:
-                st.error(f"ERROR WHILE GENERATING ZIP: {e}")
-
-except Exception as e:
-    st.error(f"FATAL ERROR DURING STARTUP: {e}")
+        st.download_button(
+            label="📦 Download ZIP",
+            data=zip_buffer,
+            file_name="asin_images.zip",
+            mime="application/zip"
+        )
