@@ -1,76 +1,70 @@
 import streamlit as st
-import pandas as pd
-import requests
-import zipfile
-import openpyxl
-from io import BytesIO
 
-st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
+st.set_page_config(page_title="ASIN Image Downloader Debug", layout="centered")
 
-st.title("ASIN Image Downloader")
-st.write("Upload your file with ASINs and multiple image columns. The app will download, rename, and zip everything for you.")
+st.title("ASIN Image Downloader – Debug Mode")
 
-# ------------------------------
-# FILE UPLOAD
-# ------------------------------
-uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
+st.write("If an error occurs before the UI loads, it will be displayed below.")
 
-if uploaded_file:
+try:
+    import pandas as pd
+    import requests
+    import zipfile
+    from io import BytesIO
+    import openpyxl  # required for xlsx
 
-    # Load file
-    if uploaded_file.name.endswith(".xlsx"):
-        df = pd.read_excel(uploaded_file)
-    else:
-        df = pd.read_csv(uploaded_file)
-
-    st.write("### Preview")
-    st.dataframe(df.head())
-
-    # Select ASIN column
-    asin_col = st.selectbox(
-        "Select ASIN Column",
-        df.columns,
-        index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
-    )
-
-    # Select image columns
-    st.write("### Select Image Columns (in order)")
-    image_columns = st.multiselect(
-        "Choose columns with image URLs",
-        df.columns,
-        default=[c for c in df.columns if "Image" in c or "Swatch" in c]
-    )
+    st.success("Imports loaded successfully!")
 
     # ------------------------------
-    # GENERATE ZIP BUTTON
+    # FILE UPLOAD
     # ------------------------------
-    if st.button("Generate ZIP"):
+    uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
 
-        if not image_columns:
-            st.error("Please select at least one image column.")
+    if uploaded_file:
 
-        else:
-            with st.spinner("Downloading images…"):
+        st.write("File uploaded. Attempting to read...")
 
+        try:
+            if uploaded_file.name.endswith(".xlsx"):
+                df = pd.read_excel(uploaded_file)
+            else:
+                df = pd.read_csv(uploaded_file)
+
+            st.write("### Preview")
+            st.dataframe(df.head())
+
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+            st.stop()
+
+        asin_col = st.selectbox(
+            "Select ASIN Column",
+            df.columns,
+        )
+
+        image_columns = st.multiselect(
+            "Select Image Columns",
+            df.columns,
+            default=[c for c in df.columns if "Image" in c or "Swatch" in c]
+        )
+
+        if st.button("Generate ZIP"):
+            try:
                 zip_buffer = BytesIO()
                 image_count = 0
 
-                # Create in-memory ZIP
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-
                     for _, row in df.iterrows():
                         asin = str(row[asin_col]).strip()
-                        pt_counter = 1  # PT01 starts after Main
+                        pt_counter = 1
 
                         for col in image_columns:
                             url = str(row[col]).strip()
-
-                            if not url or url.lower() == "nan":
+                            if not url:
                                 continue
 
                             col_lower = col.lower()
 
-                            # Decide suffix
                             if col_lower == "main image":
                                 suffix = "Main"
                             elif "swatch" in col_lower:
@@ -81,22 +75,24 @@ if uploaded_file:
 
                             filename = f"{asin}.{suffix}.jpg"
 
-                            try:
-                                response = requests.get(url, timeout=10)
-                                response.raise_for_status()
-                                zipf.writestr(filename, response.content)
-                                image_count += 1
-
-                            except Exception as e:
-                                st.warning(f"Failed to download {url} — {e}")
+                            response = requests.get(url, timeout=10)
+                            response.raise_for_status()
+                            zipf.writestr(filename, response.content)
+                            image_count += 1
 
                 zip_buffer.seek(0)
 
-            st.success(f"Done! {image_count} images downloaded and zipped.")
+                st.success(f"Done! {image_count} images processed.")
 
-            st.download_button(
-                label="Download ZIP",
-                data=zip_buffer,
-                file_name="asin_images.zip",
-                mime="application/zip"
-            )
+                st.download_button(
+                    label="Download ZIP",
+                    data=zip_buffer,
+                    file_name="asin_images.zip",
+                    mime="application/zip"
+                )
+
+            except Exception as e:
+                st.error(f"ERROR WHILE GENERATING ZIP: {e}")
+
+except Exception as e:
+    st.error(f"FATAL ERROR DURING STARTUP: {e}")
