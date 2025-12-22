@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import zipfile
+import openpyxl
 from io import BytesIO
 
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
