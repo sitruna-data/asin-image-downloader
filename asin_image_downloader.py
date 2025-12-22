@@ -11,7 +11,6 @@ try:
     import requests
     import zipfile
     from io import BytesIO
-    import openpyxl  # required for xlsx
 
     st.success("Imports loaded successfully!")
 
@@ -26,9 +25,11 @@ try:
 
         try:
             if uploaded_file.name.endswith(".xlsx"):
-                df = pd.read_excel(uploaded_file)
+                df = pd.read_excel(uploaded_file, engine="openpyxl")
+
             else:
-                df = pd.read_csv(uploaded_file)
+                df = pd.read_excel(uploaded_file, engine="openpyxl")
+
 
             st.write("### Preview")
             st.dataframe(df.head())
