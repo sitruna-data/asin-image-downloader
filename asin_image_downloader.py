@@ -26,10 +26,8 @@ try:
         try:
             if uploaded_file.name.endswith(".xlsx"):
                 df = pd.read_excel(uploaded_file, engine="openpyxl")
-
             else:
-                df = pd.read_excel(uploaded_file, engine="openpyxl")
-
+                df = pd.read_csv(uploaded_file)
 
             st.write("### Preview")
             st.dataframe(df.head())
@@ -38,10 +36,7 @@ try:
             st.error(f"Error reading file: {e}")
             st.stop()
 
-        asin_col = st.selectbox(
-            "Select ASIN Column",
-            df.columns,
-        )
+        asin_col = st.selectbox("Select ASIN Column", df.columns)
 
         image_columns = st.multiselect(
             "Select Image Columns",
