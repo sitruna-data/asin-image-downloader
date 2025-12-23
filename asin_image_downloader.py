@@ -1,12 +1,4 @@
 import streamlit as st
-import pkg_resources
-
-st.write("### Installed packages:")
-for p in pkg_resources.working_set:
-    if "openpyxl" in p.project_name.lower():
-        st.write(p)
-        import pandas as pd
-        
 import requests
 import zipfile
 from io import BytesIO
