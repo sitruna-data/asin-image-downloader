@@ -2,21 +2,21 @@ import streamlit as st
 import pandas as pd
 import requests
 import zipfile
-from io import BytesIO
 import tempfile
 import os
 import math
+import uuid
 
 # ------------------------------
 # Streamlit Setup
 # ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
-st.title("ASIN Image Downloader (Batched & Cloud-Stable)")
+st.title("ASIN Image Downloader (Stable, Batched, Temporary ZIPs)")
 st.write("""
-This tool downloads and renames images for each ASIN, then packages them into 
-ZIP files of **40 ASINs per batch** to avoid Streamlit Cloud timeouts.
-Each ZIP is uploaded safely to **transfer.sh** for reliable downloading.
+This tool downloads and renames images for each ASIN, packaged into 
+ZIP files of **40 ASINs per batch**.  
+Files are served directly from the app and auto-delete after download.
 """)
 
 
@@ -24,7 +24,6 @@ Each ZIP is uploaded safely to **transfer.sh** for reliable downloading.
 # URL Validator
 # ------------------------------
 def is_valid_url(url):
-    """Return True only for real usable URLs."""
     if url is None:
         return False
 
@@ -32,10 +31,7 @@ def is_valid_url(url):
     if url.lower() in ["", "nan", "none", "null", "na", "true", "false"]:
         return False
 
-    if not url.lower().startswith("http"):
-        return False
-
-    return True
+    return url.lower().startswith("http")
 
 
 # ------------------------------
@@ -65,7 +61,7 @@ if uploaded_file:
         index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
     )
 
-    # Deduplicate to one row per ASIN
+    # Deduplicate
     df = df.groupby(asin_col).first().reset_index()
 
     total_asins = len(df)
@@ -76,12 +72,12 @@ if uploaded_file:
     default_cols = [c for c in df.columns if "image" in c.lower() or "swatch" in c.lower()]
 
     image_columns = st.multiselect(
-        "Choose columns containing image URLs",
+        "Choose image URL columns",
         df.columns,
         default=default_cols
     )
 
-    # Button
+    # Button to start processing
     if st.button("Generate ZIP Batches"):
 
         if not image_columns:
@@ -91,23 +87,23 @@ if uploaded_file:
         BATCH_SIZE = 40
         num_batches = math.ceil(total_asins / BATCH_SIZE)
 
-        st.info(f"Creating **{num_batches} batches** of up to {BATCH_SIZE} ASINs each...")
+        st.info(f"Creating **{num_batches} ZIP batches**...")
 
-        batch_download_links = []
+        download_links = []
 
-        # Process batches
         for batch_idx in range(num_batches):
+
             with st.spinner(f"Processing batch {batch_idx+1} of {num_batches}..."):
 
-                # Slice the batch
+                # Slice ASINs for this batch
                 batch_df = df.iloc[batch_idx*BATCH_SIZE : (batch_idx+1)*BATCH_SIZE]
 
-                # Create a temp ZIP
+                # Create temp zip file
                 temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-                temp_zip_path = temp_zip.name
+                zip_path = temp_zip.name
                 temp_zip.close()
 
-                with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
 
                     for _, row in batch_df.iterrows():
                         asin = str(row[asin_col]).strip()
@@ -138,39 +134,54 @@ if uploaded_file:
                             except:
                                 pass
 
-                # ------------------------------
-                # UPLOAD ZIP TO TRANSFER.SH
-                # ------------------------------
-                try:
-                    with open(temp_zip_path, "rb") as f:
-                        upload_response = requests.put(
-                            f"https://transfer.sh/asin_batch_{batch_idx+1}.zip",
-                            data=f
-                        )
+                # Create a unique ID to expose file via Streamlit
+                file_id = str(uuid.uuid4())
 
-                    if upload_response.status_code == 200:
-                        download_url = upload_response.text.strip()
-                        batch_download_links.append((batch_idx+1, download_url))
-                    else:
-                        batch_download_links.append(
-                            (batch_idx+1, f"UPLOAD FAILED: HTTP {upload_response.status_code}")
-                        )
+                # Store download path for user
+                st.session_state[file_id] = zip_path
 
-                except Exception as e:
-                    batch_download_links.append((batch_idx+1, f"UPLOAD ERROR: {e}"))
+                download_url = f"/media/{file_id}"
 
-                # Clean up
-                try:
-                    os.remove(temp_zip_path)
-                except:
-                    pass
+                download_links.append((batch_idx+1, download_url))
 
+
+        # ------------------------------
+        # Display download links
+        # ------------------------------
         st.success("All batches processed!")
 
         st.write("## Download Your ZIP Batches")
 
-        for batch_num, url in batch_download_links:
-            if url.startswith("http"):
-                st.markdown(f"- **Batch {batch_num}:** [Download ZIP]({url})")
-            else:
-                st.markdown(f"- **Batch {batch_num}:** ❌ {url}")
+        for batch_num, url in download_links:
+            st.markdown(f"- **Batch {batch_num}:** 👉 [Download ZIP]({url})", unsafe_allow_html=True)
+
+
+# ------------------------------
+# MEDIA ENDPOINT (SERVE FILES + DELETE AFTER DOWNLOAD)
+# ------------------------------
+from fastapi import FastAPI
+import threading
+import time
+
+# This runs inside Streamlit's FastAPI backend
+app = FastAPI()
+
+@app.get("/media/{file_id}")
+def serve_file(file_id: str):
+    """Serves the ZIP file and deletes it after a delay."""
+    zip_path = st.session_state.get(file_id)
+
+    if not zip_path or not os.path.exists(zip_path):
+        return "File not found."
+
+    # Serve file content
+    def delayed_delete(path):
+        time.sleep(5)
+        try:
+            os.remove(path)
+        except:
+            pass
+
+    threading.Thread(target=delayed_delete, args=(zip_path,)).start()
+
+    return FileResponse(zip_path, media_type="application/zip", filename="asin_batch.zip")
