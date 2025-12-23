@@ -14,7 +14,8 @@ st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 st.title("ASIN Image Downloader")
 st.write("""
 Upload your file with ASINs and multiple image columns.  
-The app will download, rename, and zip everything for you — safely and efficiently.
+The app will download, rename, zip and deliver your images safely —  
+even for very large files.
 """)
 
 
@@ -43,7 +44,7 @@ uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
 
 if uploaded_file:
 
-    # Load file safely
+    # Load file
     try:
         if uploaded_file.name.endswith(".xlsx"):
             df = pd.read_excel(uploaded_file)
@@ -64,7 +65,7 @@ if uploaded_file:
         index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
     )
 
-    # Deduplicate rows per ASIN
+    # Deduplicate rows to avoid massive downloads
     df = df.groupby(asin_col).first().reset_index()
 
     # Image columns
@@ -86,7 +87,7 @@ if uploaded_file:
 
         with st.spinner("Downloading images and creating ZIP…"):
 
-            # Create a temporary ZIP file on disk (NOT in memory)
+            # Create temporary ZIP on disk
             temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             temp_zip_path = temp_zip.name
             temp_zip.close()
@@ -95,11 +96,10 @@ if uploaded_file:
 
             with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
 
-                # Loop through ASINs
                 for _, row in df.iterrows():
 
                     asin = str(row[asin_col]).strip()
-                    pt_counter = 1  # PT01 starts after main image
+                    pt_counter = 1
 
                     for col in image_columns:
 
@@ -111,7 +111,7 @@ if uploaded_file:
                         url = str(raw_url).strip()
                         col_lower = col.lower()
 
-                        # Determine suffix
+                        # Determine filename suffix
                         if col_lower == "main image":
                             suffix = "Main"
                         elif "swatch" in col_lower:
@@ -132,17 +132,29 @@ if uploaded_file:
                             st.warning(f"Skipping {url} — {e}")
 
         st.success(f"Done! {image_count} images downloaded and zipped.")
+        st.write("Your ZIP file is being uploaded…")
 
-        # Stream ZIP file to user
-        with open(temp_zip_path, "rb") as f:
-            st.download_button(
-                label="📦 Download ZIP",
-                data=f,
-                file_name="asin_images.zip",
-                mime="application/zip"
-            )
+        # ------------------------------
+        # UPLOAD ZIP TO FILE.IO
+        # ------------------------------
+        try:
+            with open(temp_zip_path, "rb") as f:
+                upload_response = requests.post(
+                    "https://file.io",
+                    files={"file": ("asin_images.zip", f)}
+                ).json()
 
-        # Clean-up temporary ZIP file
+            if upload_response.get("success"):
+                download_url = upload_response["link"]
+                st.success("Your ZIP file is ready!")
+                st.markdown(f"### 👉 [Click here to download your ZIP file]({download_url})")
+            else:
+                st.error("Failed to upload file for download. Please try again.")
+
+        except Exception as e:
+            st.error(f"Upload failed: {e}")
+
+        # Clean up temporary ZIP
         try:
             os.remove(temp_zip_path)
         except:
