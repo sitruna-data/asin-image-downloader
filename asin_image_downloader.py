@@ -5,17 +5,18 @@ import zipfile
 from io import BytesIO
 import tempfile
 import os
+import math
 
 # ------------------------------
 # Streamlit Setup
 # ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
-st.title("ASIN Image Downloader")
+st.title("ASIN Image Downloader (Batched for Large Files)")
 st.write("""
-Upload your file with ASINs and multiple image columns.  
-The app will download, rename, zip and deliver your images safely —  
-even for very large files.
+This tool downloads and renames images for each ASIN, then packages them into 
+ZIP files of **40 ASINs per batch** to avoid Streamlit Cloud timeouts.
+Each ZIP is uploaded to file.io for stable downloading.
 """)
 
 
@@ -38,7 +39,7 @@ def is_valid_url(url):
 
 
 # ------------------------------
-# File Upload
+# FILE UPLOAD
 # ------------------------------
 uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
 
@@ -54,7 +55,6 @@ if uploaded_file:
         st.error(f"Error reading file: {e}")
         st.stop()
 
-    # Show preview
     st.write("### Preview")
     st.dataframe(df.head())
 
@@ -65,97 +65,111 @@ if uploaded_file:
         index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
     )
 
-    # Deduplicate rows to avoid massive downloads
+    # Deduplicate to one row per ASIN
     df = df.groupby(asin_col).first().reset_index()
 
+    total_asins = len(df)
+    st.write(f"### Total ASINs detected: **{total_asins}**")
+
     # Image columns
-    st.write("### Select Image Columns (in the correct order)")
+    st.write("### Select Image Columns (in order)")
     default_cols = [c for c in df.columns if "image" in c.lower() or "swatch" in c.lower()]
 
     image_columns = st.multiselect(
-        "Choose columns with image URLs",
+        "Choose columns containing image URLs",
         df.columns,
         default=default_cols
     )
 
-    # Generate ZIP
-    if st.button("Generate ZIP"):
+    # Button
+    if st.button("Generate ZIP Batches"):
 
         if not image_columns:
             st.error("Please select at least one image column.")
             st.stop()
 
-        with st.spinner("Downloading images and creating ZIP…"):
+        BATCH_SIZE = 40
+        num_batches = math.ceil(total_asins / BATCH_SIZE)
 
-            # Create temporary ZIP on disk
-            temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            temp_zip_path = temp_zip.name
-            temp_zip.close()
+        st.info(f"Creating **{num_batches} batches** of up to 40 ASINs each...")
 
-            image_count = 0
+        batch_download_links = []
 
-            with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Process batches
+        for batch_idx in range(num_batches):
+            with st.spinner(f"Processing batch {batch_idx+1} of {num_batches}..."):
 
-                for _, row in df.iterrows():
+                # Slice the batch
+                batch_df = df.iloc[batch_idx*BATCH_SIZE : (batch_idx+1)*BATCH_SIZE]
 
-                    asin = str(row[asin_col]).strip()
-                    pt_counter = 1
+                # Create a temp ZIP
+                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+                temp_zip_path = temp_zip.name
+                temp_zip.close()
 
-                    for col in image_columns:
+                with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
 
-                        raw_url = row[col]
+                    for _, row in batch_df.iterrows():
+                        asin = str(row[asin_col]).strip()
+                        pt_counter = 1
 
-                        if not is_valid_url(raw_url):
-                            continue
+                        for col in image_columns:
+                            raw_url = row[col]
+                            if not is_valid_url(raw_url):
+                                continue
 
-                        url = str(raw_url).strip()
-                        col_lower = col.lower()
+                            url = str(raw_url).strip()
+                            col_lower = col.lower()
 
-                        # Determine filename suffix
-                        if col_lower == "main image":
-                            suffix = "Main"
-                        elif "swatch" in col_lower:
-                            suffix = "Swatch"
-                        else:
-                            suffix = f"PT{pt_counter:02d}"
-                            pt_counter += 1
+                            if col_lower == "main image":
+                                suffix = "Main"
+                            elif "swatch" in col_lower:
+                                suffix = "Swatch"
+                            else:
+                                suffix = f"PT{pt_counter:02d}"
+                                pt_counter += 1
 
-                        filename = f"{asin}.{suffix}.jpg"
+                            filename = f"{asin}.{suffix}.jpg"
 
-                        try:
-                            response = requests.get(url, timeout=10)
-                            response.raise_for_status()
-                            zipf.writestr(filename, response.content)
-                            image_count += 1
+                            try:
+                                response = requests.get(url, timeout=10)
+                                response.raise_for_status()
+                                zipf.writestr(filename, response.content)
+                            except:
+                                pass
 
-                        except Exception as e:
-                            st.warning(f"Skipping {url} — {e}")
+                # Upload the batch ZIP to file.io
+                try:
+                    with open(temp_zip_path, "rb") as f:
+                        upload_response = requests.post(
+                            "https://file.io",
+                            files={"file": (f"asin_batch_{batch_idx+1}.zip", f)}
+                        ).json()
 
-        st.success(f"Done! {image_count} images downloaded and zipped.")
-        st.write("Your ZIP file is being uploaded…")
+                    if upload_response.get("success"):
+                        batch_download_links.append(
+                            (batch_idx+1, upload_response["link"])
+                        )
+                    else:
+                        batch_download_links.append(
+                            (batch_idx+1, "UPLOAD FAILED")
+                        )
 
-        # ------------------------------
-        # UPLOAD ZIP TO FILE.IO
-        # ------------------------------
-        try:
-            with open(temp_zip_path, "rb") as f:
-                upload_response = requests.post(
-                    "https://file.io",
-                    files={"file": ("asin_images.zip", f)}
-                ).json()
+                except Exception as e:
+                    batch_download_links.append((batch_idx+1, f"UPLOAD ERROR: {e}"))
 
-            if upload_response.get("success"):
-                download_url = upload_response["link"]
-                st.success("Your ZIP file is ready!")
-                st.markdown(f"### 👉 [Click here to download your ZIP file]({download_url})")
+                # Clean up
+                try:
+                    os.remove(temp_zip_path)
+                except:
+                    pass
+
+        st.success("All batches processed!")
+
+        st.write("## Download Your ZIP Batches")
+
+        for batch_num, url in batch_download_links:
+            if "http" in url:
+                st.markdown(f"- **Batch {batch_num}:** [Download ZIP]({url})")
             else:
-                st.error("Failed to upload file for download. Please try again.")
-
-        except Exception as e:
-            st.error(f"Upload failed: {e}")
-
-        # Clean up temporary ZIP
-        try:
-            os.remove(temp_zip_path)
-        except:
-            pass
+                st.markdown(f"- **Batch {batch_num}:** ❌ {url}")
