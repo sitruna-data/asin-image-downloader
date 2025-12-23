@@ -4,8 +4,9 @@ import requests
 import zipfile
 from io import BytesIO
 
-
-
+# ------------------------------
+# Streamlit Setup
+# ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
 st.title("ASIN Image Downloader")
@@ -14,63 +15,79 @@ Upload your file with ASINs and multiple image columns.
 The app will download, rename, and zip everything for you.
 """)
 
+
 # ------------------------------
-# Helper: Safe URL validator
+# Helper: Safe URL Validator
 # ------------------------------
 def is_valid_url(url):
-    """Returns True only for real, usable URLs."""
+    """Return True only for actual usable URLs."""
     if url is None:
         return False
 
     url = str(url).strip()
 
-    if url.lower() in ["", "nan", "none", "null", "na"]:
+    # Reject common non-URL junk
+    if url.lower() in ["", "nan", "none", "null", "na", "true", "false"]:
         return False
 
-    if not url.startswith("http"):
+    # Must begin with HTTP or HTTPS
+    if not url.lower().startswith("http"):
         return False
 
     return True
 
 
 # ------------------------------
-# FILE UPLOAD
+# Upload File
 # ------------------------------
 uploaded_file = st.file_uploader("Upload your file", type=["xlsx", "csv"])
 
 if uploaded_file:
 
-    # Load file safely
+    # Load file intelligently
     try:
         if uploaded_file.name.endswith(".xlsx"):
-            df = pd.read_excel(uploaded_file, engine="openpyxl")
+            df = pd.read_excel(uploaded_file)
         else:
             df = pd.read_csv(uploaded_file)
     except Exception as e:
         st.error(f"Error reading file: {e}")
         st.stop()
 
+    # Show preview
     st.write("### Preview")
     st.dataframe(df.head())
 
-    # Select ASIN column
+
+    # ------------------------------
+    # Select ASIN Column
+    # ------------------------------
     asin_col = st.selectbox(
         "Select ASIN Column",
         df.columns,
         index=list(df.columns).index("ASIN") if "ASIN" in df.columns else 0
     )
 
-    # Select image columns
-    st.write("### Select Image Columns (in the correct order)")
-    image_columns = st.multiselect(
-        "Choose columns with image URLs",
-        df.columns,
-        default=[c for c in df.columns if "Image" in c or "Swatch" in c]
-    )
 
     # ------------------------------
-    # GENERATE ZIP BUTTON
+    # Deduplicate rows by ASIN (CRITICAL FIX)
     # ------------------------------
+    df = df.groupby(asin_col).first().reset_index()
+
+
+    # ------------------------------
+    # Pick Image Columns
+    # ------------------------------
+    st.write("### Select Image Columns (in the correct order)")
+
+    default_cols = [c for c in df.columns if "image" in c.lower() or "swatch" in c.lower()]
+
+    image_columns = st.multiselect(
+        "Choose columns containing image URLs",
+        df.columns,
+        default=default_cols
+    )
+
     if st.button("Generate ZIP"):
 
         if not image_columns:
@@ -84,12 +101,14 @@ if uploaded_file:
 
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
 
+                # Loop ASIN by ASIN (after dedupe)
                 for _, row in df.iterrows():
 
                     asin = str(row[asin_col]).strip()
-                    pt_counter = 1  # PT01 starts after Main image
+                    pt_counter = 1   # PT01 starts immediately after any Main image
 
                     for col in image_columns:
+
                         raw_url = row[col]
 
                         if not is_valid_url(raw_url):
@@ -98,7 +117,7 @@ if uploaded_file:
                         url = str(raw_url).strip()
                         col_lower = col.lower()
 
-                        # Assign proper suffix
+                        # Assign correct suffix
                         if col_lower == "main image":
                             suffix = "Main"
                         elif "swatch" in col_lower:
@@ -112,13 +131,13 @@ if uploaded_file:
                         try:
                             response = requests.get(url, timeout=10)
                             response.raise_for_status()
-
                             zipf.writestr(filename, response.content)
                             image_count += 1
 
                         except Exception as e:
                             st.warning(f"Skipping {url} — {e}")
 
+            # Final ZIP ready
             zip_buffer.seek(0)
 
         st.success(f"Done! {image_count} images downloaded and zipped.")
