@@ -12,11 +12,11 @@ import math
 # ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
-st.title("ASIN Image Downloader (Batched for Large Files)")
+st.title("ASIN Image Downloader (Batched & Cloud-Stable)")
 st.write("""
 This tool downloads and renames images for each ASIN, then packages them into 
 ZIP files of **40 ASINs per batch** to avoid Streamlit Cloud timeouts.
-Each ZIP is uploaded to file.io for stable downloading.
+Each ZIP is uploaded safely to **transfer.sh** for reliable downloading.
 """)
 
 
@@ -91,7 +91,7 @@ if uploaded_file:
         BATCH_SIZE = 40
         num_batches = math.ceil(total_asins / BATCH_SIZE)
 
-        st.info(f"Creating **{num_batches} batches** of up to 40 ASINs each...")
+        st.info(f"Creating **{num_batches} batches** of up to {BATCH_SIZE} ASINs each...")
 
         batch_download_links = []
 
@@ -138,21 +138,22 @@ if uploaded_file:
                             except:
                                 pass
 
-                # Upload the batch ZIP to file.io
+                # ------------------------------
+                # UPLOAD ZIP TO TRANSFER.SH
+                # ------------------------------
                 try:
                     with open(temp_zip_path, "rb") as f:
-                        upload_response = requests.post(
-                            "https://file.io",
-                            files={"file": (f"asin_batch_{batch_idx+1}.zip", f)}
-                        ).json()
-
-                    if upload_response.get("success"):
-                        batch_download_links.append(
-                            (batch_idx+1, upload_response["link"])
+                        upload_response = requests.put(
+                            f"https://transfer.sh/asin_batch_{batch_idx+1}.zip",
+                            data=f
                         )
+
+                    if upload_response.status_code == 200:
+                        download_url = upload_response.text.strip()
+                        batch_download_links.append((batch_idx+1, download_url))
                     else:
                         batch_download_links.append(
-                            (batch_idx+1, "UPLOAD FAILED")
+                            (batch_idx+1, f"UPLOAD FAILED: HTTP {upload_response.status_code}")
                         )
 
                 except Exception as e:
@@ -169,7 +170,7 @@ if uploaded_file:
         st.write("## Download Your ZIP Batches")
 
         for batch_num, url in batch_download_links:
-            if "http" in url:
+            if url.startswith("http"):
                 st.markdown(f"- **Batch {batch_num}:** [Download ZIP]({url})")
             else:
                 st.markdown(f"- **Batch {batch_num}:** ❌ {url}")
