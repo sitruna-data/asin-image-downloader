@@ -16,11 +16,11 @@ import streamlit as st
 # ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
-st.title("ASIN Image Downloader (Stable, Batched, In-Memory ZIPs)")
+st.title("Sitruna ASIN Image Downloader")
 st.write(
     """
 This tool downloads and renames images for each ASIN, packaged into ZIP files of **40 ASINs per batch**.
-Batches are created **in memory** and offered via `Download` buttons (no temp files to clean up).
+Batches are created **in memory** and offered via `Download` buttons. 
 """
 )
 
