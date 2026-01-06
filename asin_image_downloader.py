@@ -195,19 +195,32 @@ if uploaded_file:
 if st.session_state.batches:
     st.write("## Download ZIP Batches")
 
-    for i, (zip_name, zip_path, counters) in enumerate(st.session_state.batches, start=1):
-        st.write(
-            f"**Batch {i}:** {counters['asins']} ASINs, "
-            f"{counters['files_written']} files, {counters['errors']} errors"
+    batch_labels = [
+        f"Batch {i+1}: {counters['asins']} ASINs ({zip_name})"
+        for i, (zip_name, _, counters) in enumerate(st.session_state.batches)
+    ]
+
+    selected_idx = st.selectbox(
+        "Choose a batch to download",
+        options=list(range(len(batch_labels))),
+        format_func=lambda i: batch_labels[i],
+    )
+
+    zip_name, zip_path, counters = st.session_state.batches[selected_idx]
+
+    st.write(
+        f"**Selected:** {counters['asins']} ASINs, "
+        f"{counters['files_written']} files, {counters['errors']} errors"
+    )
+
+    with open(zip_path, "rb") as f:
+        st.download_button(
+            "Download selected ZIP",
+            data=f,
+            file_name=zip_name,
+            mime="application/zip",
+            key="single_download",
         )
-        with open(zip_path, "rb") as f:
-            st.download_button(
-                "Download ZIP",
-                data=f,
-                file_name=zip_name,
-                mime="application/zip",
-                key=f"dl_{i}",
-            )
 
     st.write("## Download Report")
     st.dataframe(st.session_state.report_df, use_container_width=True)
