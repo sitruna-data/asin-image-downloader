@@ -12,11 +12,18 @@ import requests
 import streamlit as st
 
 # ------------------------------
-# Streamlit Setup (must be first)
+# Streamlit Setup
 # ------------------------------
 st.set_page_config(page_title="ASIN Image Downloader", layout="centered")
 
 st.title("Sitruna ASIN Image Downloader")
+
+if "batches" not in st.session_state:
+    st.session_state.batches = None
+
+if "report_df" not in st.session_state:
+    st.session_state.report_df = None
+
 st.write(
     """
 This tool downloads and renames images for each ASIN, packaged into ZIP files of **40 ASINs per batch**.
@@ -222,7 +229,7 @@ if uploaded_file:
     with col2:
         timeout_each = st.slider("Per-image timeout (seconds)", min_value=4, max_value=30, value=12, step=1)
 
-    if st.button("Generate ZIP Batches"):
+    if st.button("Generate ZIP Batches") and st.session_state.batches is None:
         if not image_columns:
             st.error("Please select at least one image column.")
             st.stop()
@@ -255,9 +262,12 @@ if uploaded_file:
             progress.progress(int(((batch_idx + 1) / num_batches) * 100))
 
         st.success("All batches processed!")
+        
+        st.session_state.batches = batch_download_payloads
+        st.session_state.report_df = pd.DataFrame(all_events)
 
         st.write("## Download Your ZIP Batches")
-        for i, (zip_name, zip_bytes, counters) in enumerate(batch_download_payloads, start=1):
+        for i, (zip_name, zip_bytes, counters) in enumerate(st.session_state.batches, start=1):
             st.write(
                 f"**Batch {i}:** {counters['asins']} ASINs, "
                 f"{counters['files_written']} files, {counters['errors']} errors"
@@ -267,20 +277,20 @@ if uploaded_file:
                 data=zip_bytes,
                 file_name=zip_name,
                 mime="application/zip",
-                key=f"dl_{i}_{uuid.uuid4()}",
+                key=f"dl_{i}",
             )
 
         # Diagnostics table
-        if all_events:
+        if st.session_state.report_df is not None:
             st.write("## Download Report")
             report_df = pd.DataFrame(all_events)
             # Show failures first for quick triage
             report_df = report_df.sort_values(by=["Error", "ASIN"], na_position="last").reset_index(drop=True)
-            st.dataframe(report_df, use_container_width=True)
+            st.dataframe(st.session_state.report_df, use_container_width=True)
             # Optional CSV
             st.download_button(
                 "Download Report CSV",
-                data=report_df.to_csv(index=False),
+                data=st.session_state.report_df.to_csv(index=False),
                 file_name="asin_image_download_report.csv",
                 mime="text/csv",
             )
